@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 32 32">
+  <defs>
+    <path id="slice" d="M26.8 12.05 A11.5 11.5 0 0 1 16 27.5 L16 22 A6 6 0 0 0 21.64 13.95 Z"/>
+    <linearGradient id="grad0" x1="18" y1="6" x2="26" y2="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#B2A6FF"/>
+      <stop offset="45%" stop-color="#7A5CF3"/>
+      <stop offset="100%" stop-color="#4025B8"/>
+    </linearGradient>
+    <linearGradient id="grad120" gradientUnits="userSpaceOnUse" x1="18" y1="6" x2="26" y2="24" gradientTransform="rotate(120 16 16)">
+      <stop offset="0%" stop-color="#B2A6FF"/>
+      <stop offset="45%" stop-color="#6A4BE4"/>
+      <stop offset="100%" stop-color="#2F178E"/>
+    </linearGradient>
+    <linearGradient id="grad240" gradientUnits="userSpaceOnUse" x1="18" y1="6" x2="26" y2="24" gradientTransform="rotate(240 16 16)">
+      <stop offset="0%" stop-color="#C0B6FF"/>
+      <stop offset="45%" stop-color="#8266FF"/>
+      <stop offset="100%" stop-color="#3D23A5"/>
+    </linearGradient>
+  </defs>
+  <use href="#slice" fill="url(#grad0)"/>
+  <use href="#slice" fill="url(#grad120)" transform="rotate(120 16 16)"/>
+  <use href="#slice" fill="url(#grad240)" transform="rotate(240 16 16)"/>
+</svg>

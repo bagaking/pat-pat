@@ -1,0 +1,107 @@
+{
+  "name": "pat-pat",
+  "displayName": "Pat Pat",
+  "description": "Parallel branch helper for vibe coding.",
+  "version": "0.0.1",
+  "publisher": "patpat.dev",
+  "icon": "media/patpat.svg",
+  "engines": {
+    "vscode": "^1.64.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:patPat.bootstrapFeature",
+    "onCommand:patPat.startFeature",
+    "onCommand:patPat.killAll",
+    "onCommand:patPat.clearAll",
+    "onCommand:patPat.abortAll",
+    "onView:patPatActivityView",
+    "workspaceContains:.git"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "echo \"No tests yet\""
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "patPat.bootstrapFeature",
+        "category": "Pat Pat",
+        "title": "Bootstrap Pat Pat Feature"
+      },
+      {
+        "command": "patPat.startFeature",
+        "category": "Pat Pat",
+        "title": "Start Pat Pat Feature"
+      },
+      {
+        "command": "patPat.killAll",
+        "category": "Pat Pat",
+        "title": "Kill All Pat Pat Terminals"
+      },
+      {
+        "command": "patPat.clearAll",
+        "category": "Pat Pat",
+        "title": "Clear All Pat Pat Terminals"
+      },
+      {
+        "command": "patPat.abortAll",
+        "category": "Pat Pat",
+        "title": "Abort All Pat Pat Terminals"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "patPatActivity",
+          "title": "Pat Pat",
+          "icon": "media/patpat.svg"
+        }
+      ]
+    },
+    "views": {
+      "patPatActivity": [
+        {
+          "id": "patPatActivityView",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "patPat.bootstrapFeature",
+          "when": "view == patPatActivityView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "patPat.startFeature",
+          "when": "view == patPatActivityView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "patPat.killAll",
+          "when": "view == patPatActivityView",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "patPat.startFeature",
+          "when": "view == patPatActivityView && viewItem == patPat.feature",
+          "group": "inline@1"
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.2.5",
+    "@types/vscode": "^1.64.0",
+    "typescript": "^5.0.4"
+  }
+}
