@@ -1,9 +1,9 @@
 import * as path from 'path';
 import { promises as fs } from 'fs';
-import { window, workspace, Terminal, TerminalOptions, WorkspaceFolder } from 'vscode';
+import { window, workspace, Terminal, TerminalOptions, WorkspaceFolder, ThemeIcon, ThemeColor } from 'vscode';
 import { GitService } from './gitService';
 import { StateStore } from './stateStore';
-import { ExtensionState, FeatureSnapshot, FeatureStatus } from './types';
+import { ExtensionState, FeatureSnapshot, FeatureStatus, TerminalSnapshot, TerminalStatus } from './types';
 import { randomChoice } from './utils';
 
 const ICONS = ['terminal', 'rocket', 'git-branch', 'pulse', 'zap', 'flame', 'beaker'];
@@ -65,43 +65,76 @@ export class FeatureManager {
         await this.createOrUpdateFeatureSnapshot({ featureName, parent: integration, workspaceFolder });
     }
 
-    async startFeature(featureId: string): Promise<void> {
+    async openFeature(featureId: string, targetTerminalName?: string): Promise<void> {
         await this.ensureState();
         const feature = this.state?.features.find((f) => f.id === featureId);
         if (!feature) {
             void window.showWarningMessage(`Feature ${featureId} not found. Bootstrap inte-pat/feat-pat first.`);
             return;
         }
-        const label = this.describeFeature(feature);
 
-        const existing = this.runtime.get(featureId);
-        if (existing) {
-            existing.terminals.forEach((terminal) => terminal.show());
-            void window.showInformationMessage(`Reusing terminals for ${label}.`);
+        const targetName = targetTerminalName ?? feature.terminals[0]?.name;
+        const runtime = this.runtime.get(featureId);
+        if (runtime) {
+            runtime.feature = feature;
+            runtime.terminals.forEach((terminal, index) => {
+                const snapshot = feature.terminals[index];
+                if (!snapshot) {
+                    terminal.hide();
+                    return;
+                }
+                const preserveFocus = targetName ? snapshot.name !== targetName : index !== 0;
+                terminal.show(preserveFocus);
+                const command = snapshot.startupCommand;
+                if (command && snapshot.status !== 'running') {
+                    terminal.sendText(command, true);
+                }
+            });
+            const statusPayload = this.toTerminalStatus(feature, targetName);
+            feature.terminals = statusPayload;
+            await this.updateFeatureStatus(featureId, 'running', statusPayload);
+            const refreshed = this.state?.features.find((f) => f.id === featureId);
+            if (refreshed) {
+                this.updateRuntimeFeature(refreshed);
+            }
             return;
         }
 
-        const terminalNames = this.getDefaultTerminalNames(feature);
-        const terminals = terminalNames.map((name) => this.createTerminal(feature, name));
+        const terminals = feature.terminals.map((snapshot) => this.createTerminal(feature, snapshot));
         terminals.forEach((terminal, index) => {
-            const script = index === 0 ? 'pwd' : 'git status --short';
-            terminal.sendText(script, true);
+            const snapshot = feature.terminals[index];
+            if (!snapshot) {
+                return;
+            }
+            const command = snapshot.startupCommand;
+            if (command) {
+                terminal.sendText(command, true);
+            }
+            const preserveFocus = targetName ? snapshot.name !== targetName : index !== 0;
+            terminal.show(preserveFocus);
         });
         this.runtime.set(featureId, {
             feature,
             terminals
         });
 
-        await this.updateFeatureStatus(featureId, 'running');
+        const statusPayload = this.toTerminalStatus(feature, targetName);
+        feature.terminals = statusPayload;
+        await this.updateFeatureStatus(featureId, 'running', statusPayload);
+        const refreshed = this.state?.features.find((f) => f.id === featureId);
+        if (refreshed) {
+            this.updateRuntimeFeature(refreshed);
+        }
     }
 
-    async customizeFeature(featureId: string): Promise<void> {
+    async configFeature(featureId: string): Promise<void> {
         await this.ensureState();
         const feature = this.state?.features.find((f) => f.id === featureId);
         if (!feature) {
             void window.showWarningMessage(`Feature ${featureId} not found. Bootstrap inte-pat/feat-pat first.`);
             return;
         }
+        const runningSession = feature.terminals.find((session) => session.status === 'running')?.name;
 
         const iconPick = await window.showQuickPick(
             ICONS.map((icon) => ({
@@ -135,16 +168,85 @@ export class FeatureManager {
 
         const icon = iconPick?.icon ?? feature.icon;
         const color = colorPick ? colorPick.value : feature.color;
+
+        const updatedTerminals: TerminalSnapshot[] = [];
+        for (const terminal of feature.terminals) {
+            const commandInput = await window.showInputBox({
+                title: `${this.describeFeature(feature)} · ${terminal.name} 启动命令`,
+                prompt: '留空表示启动时不自动执行命令',
+                placeHolder: '例如: npm run dev',
+                value: terminal.startupCommand ?? ''
+            });
+            if (commandInput === undefined) {
+                return;
+            }
+            const trimmed = commandInput.trim();
+            updatedTerminals.push({
+                ...terminal,
+                startupCommand: trimmed.length > 0 ? trimmed : undefined
+            });
+        }
+
         const updated: FeatureSnapshot = {
             ...feature,
             icon,
-            color
+            color,
+            terminals: updatedTerminals
         };
 
         this.state = await this.store.upsertFeature(updated);
         this.updateRuntimeFeature(updated);
         this.emitState();
-        void window.showInformationMessage(`已更新 ${this.describeFeature(updated)} 的外观。`);
+
+        const runtime = this.runtime.get(featureId);
+        if (runtime) {
+            runtime.terminals.forEach((terminal) => terminal.dispose());
+            this.runtime.delete(featureId);
+            await this.openFeature(featureId, runningSession);
+        }
+
+        void window.showInformationMessage(`已更新 ${this.describeFeature(updated)} 的设定。`);
+    }
+
+    async editSessionCommand(featureId: string, sessionName: string): Promise<void> {
+        await this.ensureState();
+        const feature = this.state?.features.find((f) => f.id === featureId);
+        if (!feature) {
+            void window.showWarningMessage(`Feature ${featureId} not found. Bootstrap inte-pat/feat-pat first.`);
+            return;
+        }
+        const terminal = feature.terminals.find((session) => session.name === sessionName);
+        if (!terminal) {
+            void window.showWarningMessage(`Session ${sessionName} not found under ${featureId}.`);
+            return;
+        }
+        const input = await window.showInputBox({
+            title: `${this.describeFeature(feature)} · ${sessionName} 启动命令`,
+            prompt: '留空表示启动时不自动执行命令',
+            placeHolder: '例如: npm run dev',
+            value: terminal.startupCommand ?? ''
+        });
+        if (input === undefined) {
+            return;
+        }
+        const trimmed = input.trim();
+        const updatedTerminals = feature.terminals.map((session) =>
+            session.name === sessionName
+                ? { ...session, startupCommand: trimmed.length > 0 ? trimmed : undefined }
+                : session
+        );
+        const updated: FeatureSnapshot = {
+            ...feature,
+            terminals: updatedTerminals
+        };
+        this.state = await this.store.upsertFeature(updated);
+        this.updateRuntimeFeature(updated);
+        this.emitState();
+        void window.showInformationMessage(
+            trimmed
+                ? `${sessionName} 启动命令已更新。`
+                : `${sessionName} 启动命令已清空。`
+        );
     }
 
     async killAll(): Promise<void> {
@@ -172,7 +274,9 @@ export class FeatureManager {
                 runtime.terminals.splice(index, 1);
                 if (runtime.terminals.length === 0) {
                     this.runtime.delete(featureId);
-                    void this.updateFeatureStatus(featureId, 'idle');
+                    const snapshot = this.state?.features.find((feature) => feature.id === featureId);
+                    const terminals = snapshot ? this.toTerminalStatus(snapshot) : undefined;
+                    void this.updateFeatureStatus(featureId, 'idle', terminals);
                 }
                 break;
             }
@@ -290,10 +394,7 @@ export class FeatureManager {
         const existing = this.state?.features.find((f) => f.id === featureId);
         const icon = existing?.icon ?? randomChoice(ICONS);
         const color = existing?.color ?? (parentId ? randomChoice(COLORS) : undefined);
-        const terminals = (existing?.terminals ?? this.getDefaultTerminalNamesByParentId(parentId).map((name) => ({
-            name,
-            status: 'idle'
-        })));
+        const terminals = existing?.terminals ?? this.getDefaultTerminals(parentId);
         const status = existing?.status ?? 'idle';
 
         const snapshot: FeatureSnapshot = {
@@ -316,12 +417,13 @@ export class FeatureManager {
         void window.showInformationMessage(`${label} ${this.describeFeature(snapshot)} ready at ${absolutePath}`);
     }
 
-    private getDefaultTerminalNames(feature: FeatureSnapshot): string[] {
-        return this.getDefaultTerminalNamesByParentId(feature.parent);
-    }
-
-    private getDefaultTerminalNamesByParentId(parentId?: string): string[] {
-        return parentId ? FEATURE_TERMINALS : INTEGRATION_TERMINALS;
+    private getDefaultTerminals(parentId?: string): TerminalSnapshot[] {
+        const names = parentId ? FEATURE_TERMINALS : INTEGRATION_TERMINALS;
+        return names.map((name, index) => ({
+            name,
+            status: 'idle',
+            startupCommand: index === 0 ? 'pwd' : undefined
+        }));
     }
 
     private async markAllIdle(): Promise<void> {
@@ -329,23 +431,36 @@ export class FeatureManager {
             return;
         }
         for (const feature of this.state.features) {
-            await this.updateFeatureStatus(feature.id, 'idle');
+            await this.updateFeatureStatus(feature.id, 'idle', this.toTerminalStatus(feature));
         }
     }
 
-    private async updateFeatureStatus(featureId: string, status: FeatureStatus): Promise<void> {
-        this.state = await this.store.updateFeatureStatus(featureId, status);
+    private async updateFeatureStatus(
+        featureId: string,
+        status: FeatureStatus,
+        terminals?: { name: string; status: TerminalStatus; startupCommand?: string }[]
+    ): Promise<void> {
+        this.state = await this.store.updateFeatureStatus(featureId, status, terminals);
         this.emitState();
     }
 
-    private createTerminal(feature: FeatureSnapshot, name: string): Terminal {
+    private createTerminal(feature: FeatureSnapshot, terminalSnapshot: TerminalSnapshot): Terminal {
         const options: TerminalOptions = {
-            name: `${this.describeFeature(feature)}:${name}`,
-            cwd: this.resolveWorktreePath(feature)
+            name: `${this.describeFeature(feature)}:${terminalSnapshot.name}`,
+            cwd: this.resolveWorktreePath(feature),
+            iconPath: new ThemeIcon(feature.icon),
+            color: feature.color ? new ThemeColor(feature.color) : undefined
         };
         const terminal = window.createTerminal(options);
-        terminal.show(false);
         return terminal;
+    }
+
+    private toTerminalStatus(feature: FeatureSnapshot, activeName?: string, runningStatus: TerminalStatus = 'running') {
+        return feature.terminals.map((terminal) => ({
+            name: terminal.name,
+            status: activeName && terminal.name === activeName ? runningStatus : 'idle',
+            startupCommand: terminal.startupCommand
+        }));
     }
 
     private updateRuntimeFeature(snapshot: FeatureSnapshot): void {

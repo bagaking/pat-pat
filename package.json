@@ -12,13 +12,16 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:patPat.bootstrapFeature",
-    "onCommand:patPat.startFeature",
+    "onCommand:patPat.bootstrapIntegration",
+    "onCommand:patPat.openFeature",
     "onCommand:patPat.killAll",
     "onCommand:patPat.clearAll",
     "onCommand:patPat.abortAll",
     "onView:patPatActivityView",
-    "workspaceContains:.git"
+    "workspaceContains:.git",
+    "onCommand:patPat.newFeatPat",
+    "onCommand:patPat.runSession",
+    "onCommand:patPat.editSessionCommand"
   ],
   "main": "./dist/extension.js",
   "scripts": {
@@ -45,6 +48,21 @@
         "title": "Open feat-pat"
       },
       {
+        "command": "patPat.runSession",
+        "category": "Pat Pat",
+        "title": "Run feat-pat session"
+      },
+      {
+        "command": "patPat.editSessionCommand",
+        "category": "Pat Pat",
+        "title": "Edit session start command"
+      },
+      {
+        "command": "patPat.configFeature",
+        "category": "Pat Pat",
+        "title": "Configure feat-pat"
+      },
+      {
         "command": "patPat.killAll",
         "category": "Pat Pat",
         "title": "Kill All feat-pat Terminals"
@@ -58,11 +76,6 @@
         "command": "patPat.abortAll",
         "category": "Pat Pat",
         "title": "Abort All feat-pat Terminals"
-      },
-      {
-        "command": "patPat.configFeature",
-        "category": "Pat Pat",
-        "title": "Configure feat-pat"
       }
     ],
     "viewsContainers": {
@@ -102,14 +115,19 @@
       ],
       "view/item/context": [
         {
-          "command": "patPat.openFeature",
-          "when": "view == patPatActivityView && viewItem == patPat.feature",
+          "command": "patPat.runSession",
+          "when": "view == patPatActivityView && viewItem == patPat.session",
           "group": "inline@1"
+        },
+        {
+          "command": "patPat.editSessionCommand",
+          "when": "view == patPatActivityView && viewItem == patPat.session",
+          "group": "inline@2"
         },
         {
           "command": "patPat.configFeature",
           "when": "view == patPatActivityView && viewItem == patPat.feature",
-          "group": "inline@2"
+          "group": "inline@3"
         }
       ]
     }

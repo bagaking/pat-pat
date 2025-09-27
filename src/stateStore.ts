@@ -84,7 +84,7 @@ export class StateStore {
     async updateFeatureStatus(
         featureId: string,
         status: FeatureStatus,
-        terminals?: { name: string; status: TerminalStatus }[]
+        terminals?: { name: string; status: TerminalStatus; startupCommand?: string }[]
     ): Promise<ExtensionState> {
         const state = await this.load();
         const feature = state.features.find((f) => f.id === featureId);
@@ -93,7 +93,7 @@ export class StateStore {
         }
         feature.status = status;
         if (terminals) {
-            feature.terminals = terminals.map((t) => ({ name: t.name, status: t.status }));
+            feature.terminals = terminals.map((t) => ({ name: t.name, status: t.status, startupCommand: t.startupCommand }));
         } else if (status === 'running') {
             feature.terminals = feature.terminals.map((t) => ({ ...t, status: 'running' }));
         } else if (status === 'idle') {

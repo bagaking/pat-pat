@@ -9,7 +9,7 @@
 - Install dependencies with `npm install` (npm is preferred because `package-lock.json` is committed).
 - `npm run compile` runs the TypeScript compiler once; `npm run watch` keeps it hot-reloading during extension debugging.
 - `npm run lint` executes ESLint across `src/`. Fix findings or document intentional exceptions.
-- 在 Pat Pat 侧边栏先触发 "Bootstrap inte-pat" 初始化主干，再用 "New feat-pat" 创建子分支；点击 feat-pat 节点或在上下文菜单中选择 "Start feat-pat session" 可打开对应 worktree，`.pat-pat/state.json` 始终使用相对路径便于共享。
+- 在 Pat Pat 侧边栏先触发 "Bootstrap inte-pat" 初始化主干，再用 "New feat-pat" 创建子分支；在 Sessions 树视图中使用 "Run session" 启动某个 feat-pat session，"Edit start command" 编辑它的启动命令；"Configure feat-pat" 可以批量调整子线图标/配色，`.pat-pat/state.json` 记录相对路径与所有 session 的启动命令，便于共享。
 - Launch an Extension Development Host from VS Code via the included "Run Pat Pat Extension" configuration after a successful compile.
 
 ## Coding Style & Naming Conventions

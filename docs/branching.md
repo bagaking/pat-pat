@@ -1,33 +1,32 @@
-# Pat Pat 分支与 Worktree 设计
+# Pat Pat 分支 / Worktree / Session 设计
 
-## 整体模型
-Pat Pat 面向“大需求”时，约定存在一个需求主干（inte-pat）与若干特性分支（feat-pat）。根工作区保持在基线分支（通常为 `main`），负责执行命令和记录状态；工程实践发生在 `.pat-pat/integration/<feature>` 等 worktree 子目录中，各子目录共享主仓库对象但互不干扰构建产物。
+## 顶层结构
+Pat Pat 以“大需求”拆解为单一 inte-pat 主干和若干 feat-pat 子线。根工作区停留在仓库基线（如 `main`），负责调度命令；实际开发发生在 `.pat-pat/<inte>/<feat>` worktree 中，既复用 Git 对象又隔离构建环境。
 
-目录结构示例：
 ```
 .pat-pat/
-  state.json              # 扩展维护的运行时状态
-  integration/            # inte-pat 主干 worktree
-    checkout/             # 某个 feat-pat 的工作目录
-    build-ui/
+  state.json              # 扩展维护的运行状态（相对路径 + 终端配置）
+  integration/            # inte-pat 主干对应 worktree
+    __inte__/             # inte-pat 主干 session（默认直接使用根目录时仍记录在此）
+    checkout/             # 某个 feat-pat session，同步到分支 pat-pat/integration/checkout
 ```
 
-## inte-pat（主干分支）
-- 默认分支名为 `pat-pat/integration/__inte__`（即 inte 名 + `__inte__` 后缀）；首次 bootstrap 会尝试创建 `.pat-pat/integration` worktree；若当前工作区已在该分支，则直接把根目录登记为 inte-pat，同时在 `.pat-pat/integration` 下预建子目录供 feat-pat 使用。
-- inte-pat 负责汇总所有模块分支，确认无冲突后再合回仓库基线。
-- 未来如需自定义主干，可在状态模型中扩展 parent 字段；当前 MVP 假定主干即 integration。
+## inte-pat 主干
+- 主干分支命名为 `pat-pat/<inte>/__inte__`（默认 `<inte>` 为 `integration`）。首次执行「Bootstrap inte-pat」时会自动迁移旧的 `pat-pat/<inte>` 分支并写入 `.pat-pat/<inte>/__inte__` 目录。
+- inte-pat 承担需求集成，所有 feat-pat 回归此分支后再合入基线。
 
-## feat-pat（模块分支）
-- 通过「Bootstrap inte-pat」初始化主干后，再使用「New feat-pat」命令创建子分支。系统会优先检测 inte-pat，如存在则执行 `git branch pat-pat/<inte>/<feat>`（例如 `pat-pat/integration/checkout`），并建立 `.pat-pat/integration/<feat>` worktree（`state.json` 会记录相对路径，便于分享）。
-- 若主干尚未准备，为保持兼容，会退回当前分支作为 fork 基线，同时仍落在 `.pat-pat/<feature>` 目录下。
-- 启动「Start feat-pat」后，Pat Pat 会在该 worktree 中启用默认终端组（inte 或 feat），便于执行特定模块的构建与调试。
+## feat-pat 子线 & Session
+- 使用「New feat-pat」从 inte-pat fork 出 `pat-pat/<inte>/<feat>` 分支，并生成 `.pat-pat/<inte>/<feat>` worktree。每个 feat-pat 默认带有一个名为 `feat` 的 session，inte-pat 则有 `inte` session。
+- 树视图（Sessions）层级：inte-pat → feat-pat → session。只在 session 节点上提供操作：
+  - 「Run session」(`patPat.runSession`) 会聚焦该 session 并在终端面板中复用/创建对应终端。
+  - 「Edit start command」(`patPat.editSessionCommand`) 支持为 session 保存启动命令；命令保存在 `state.json`，运行时会自动执行，留空表示手动输入。
+- 侧边栏、状态栏和终端面板的图标/配色均可通过「Configure feat-pat」修改，更新后立即刷新正在运行的 session。
 
-## 合流与清理流程
-1. feat-pat 完成开发后，在对应 worktree 合并回 inte-pat（`.pat-pat/integration`）。
-2. 在 inte-pat worktree 完成集成验证，通过后再将 `pat-pat/integration` 合回 `main`。
-3. 收尾时先关闭扩展打开的终端，再执行 `git worktree remove` 和 `git branch -d pat-pat/<feature>` 清理目录与分支。
+## 合流与清理
+1. feat-pat 完成后在对应 session 合并回 inte-pat（`.pat-pat/<inte>/__inte__`）。
+2. 在 inte-pat session 完成集成验证，通过后再把 `pat-pat/<inte>/__inte__` 合回基线。
+3. 清理时先关闭扩展创建的终端，再运行 `git worktree remove`、`git branch -d pat-pat/<inte>/<feat>` 等命令。
 
-## 扩展状态与界面
-- `FeatureSnapshot` 结构新增 `id`（如 `integration/checkout`）与 `parent` 字段，以支撑父子层级展示。
-- VS Code 侧边栏树按主干 → 子分支形式折叠，状态栏也会显示 `integration/<feature>` 标识。
-- `state.json` 会随着 bootstrap/start/stop 更新，确保每个 worktree 的生命周期清晰可见；通过树视图的「Customize feat-pat appearance」可以调整图标和配色，状态栏、树节点会实时反映运行状态。
+## 状态文件
+- `FeatureSnapshot` 记录分支、worktree 相对路径、图标配色、每个 session 的运行状态及启动命令。
+- `state.json` 随着 bootstrap / run / stop / 配置更新；若迁移旧版本，扩展会自动补写新字段，并将旧分支重命名为 `pat-pat/<inte>/__inte__`。

@@ -14,8 +14,8 @@ export class StatusIndicator {
             this.item.text = '$(watch) feat-pat idle';
             this.item.tooltip = 'No active feat-pat';
             this.item.command = {
-                command: 'patPat.startFeature',
-                title: 'Start feat-pat'
+                command: 'patPat.openFeature',
+                title: 'Run session'
             };
             this.item.show();
             return;
@@ -23,12 +23,13 @@ export class StatusIndicator {
 
         const running = active.status === 'running';
         const label = this.formatLabel(active);
-        this.item.text = `${running ? '$(sync~spin)' : '$(check)'} pat ${label}`;
+        this.item.text = `${running ? '$(sync~spin)' : '$(check)'} ${label}`;
         this.item.tooltip = `${active.branch} at ${this.formatPath(active.worktreePath)}`;
+        const activeSession = active.terminals.find((terminal) => terminal.status === 'running')?.name;
         this.item.command = {
-            command: 'patPat.startFeature',
-            title: 'Re-open feat-pat',
-            arguments: [active.id]
+            command: 'patPat.openFeature',
+            title: 'Run session',
+            arguments: [active.id, activeSession]
         };
         this.item.show();
     }

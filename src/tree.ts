@@ -1,33 +1,34 @@
 import { Event, EventEmitter, ThemeColor, ThemeIcon, TreeDataProvider, TreeItem, TreeItemCollapsibleState } from 'vscode';
-import { ExtensionState, FeatureSnapshot } from './types';
+import { ExtensionState, FeatureSnapshot, TerminalSnapshot } from './types';
 
 class FeatureTreeItem extends TreeItem {
     constructor(readonly feature: FeatureSnapshot, collapsibleState: TreeItemCollapsibleState) {
         super(feature.feature, collapsibleState);
-        this.description = feature.status;
+        const runningSession = feature.terminals.find((terminal) => terminal.status === 'running');
+        this.description = runningSession ? `running · ${runningSession.name}` : feature.status;
         this.contextValue = feature.parent ? 'patPat.feature' : 'patPat.integration';
-        const iconName = feature.status === 'running' ? 'sync~spin' : feature.icon;
-        const iconColor = feature.status === 'running' ? undefined : feature.color ? new ThemeColor(feature.color) : undefined;
-        this.iconPath = new ThemeIcon(iconName, iconColor);
+        this.iconPath = new ThemeIcon(feature.icon, feature.color ? new ThemeColor(feature.color) : undefined);
         const location = feature.worktreePath === '.' ? '.' : feature.worktreePath;
         this.tooltip = `${feature.branch}\n${location}`;
-        if (feature.parent) {
-            this.command = {
-                title: 'Start feat-pat',
-                command: 'patPat.startFeature',
-                arguments: [feature.id]
-            };
-        }
     }
 }
 
-class TerminalTreeItem extends TreeItem {
-    constructor(feature: FeatureSnapshot, terminalName: string, status: string) {
-        super(terminalName, TreeItemCollapsibleState.None);
-        this.description = status;
-        this.tooltip = `${terminalName} • ${feature.worktreePath}`;
-        this.iconPath = new ThemeIcon(status === 'running' ? 'debug-stop' : 'terminal');
-        this.contextValue = 'patPat.terminal';
+class SessionTreeItem extends TreeItem {
+    constructor(readonly feature: FeatureSnapshot, readonly terminal: TerminalSnapshot) {
+        super(terminal.name, TreeItemCollapsibleState.None);
+        this.description = terminal.status;
+        const location = feature.worktreePath === '.' ? '.' : feature.worktreePath;
+        const commandHint = terminal.startupCommand ? `\n${terminal.startupCommand}` : '';
+        this.tooltip = `${terminal.name} • ${location}${commandHint}`;
+        const running = terminal.status === 'running';
+        const iconColor = feature.color ? new ThemeColor(feature.color) : undefined;
+        this.iconPath = new ThemeIcon(running ? 'sync~spin' : 'play-circle', iconColor);
+        this.contextValue = 'patPat.session';
+        this.command = {
+            title: running ? 'Focus session' : 'Run session',
+            command: 'patPat.runSession',
+            arguments: [feature.id, terminal.name]
+        };
     }
 }
 
@@ -57,23 +58,20 @@ export class PatPatTreeProvider implements TreeDataProvider<TreeItem> {
                 .map((feature) => this.createFeatureItem(feature));
         }
         if (element instanceof FeatureTreeItem) {
-            const feature =
-                this.state.features.find((candidate) => candidate.id === element.feature.id) || element.feature;
+            const feature = this.state.features.find((candidate) => candidate.id === element.feature.id) || element.feature;
             const childFeatures = this.state.features
                 .filter((candidate) => candidate.parent === feature.id)
                 .map((child) => this.createFeatureItem(child));
-            const terminals = feature.terminals.map(
-                (terminal) => new TerminalTreeItem(feature, terminal.name, terminal.status)
-            );
-            return [...childFeatures, ...terminals];
+            const sessions = feature.terminals.map((terminal) => new SessionTreeItem(feature, terminal));
+            return [...childFeatures, ...sessions];
         }
         return [];
     }
 
     private createFeatureItem(feature: FeatureSnapshot): FeatureTreeItem {
-        const hasChildren =
-            this.state.features.some((candidate) => candidate.parent === feature.id) || feature.terminals.length > 0;
-        const collapsibleState = hasChildren ? TreeItemCollapsibleState.Collapsed : TreeItemCollapsibleState.None;
+        const hasChildFeatures = this.state.features.some((candidate) => candidate.parent === feature.id);
+        const hasSessions = feature.terminals.length > 0;
+        const collapsibleState = hasChildFeatures || hasSessions ? TreeItemCollapsibleState.Collapsed : TreeItemCollapsibleState.None;
         return new FeatureTreeItem(feature, collapsibleState);
     }
 }
