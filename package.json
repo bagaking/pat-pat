@@ -12,13 +12,16 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:patPat.bootstrapFeature",
-    "onCommand:patPat.startFeature",
+    "onCommand:patPat.bootstrapIntegration",
+    "onCommand:patPat.openFeature",
     "onCommand:patPat.killAll",
     "onCommand:patPat.clearAll",
     "onCommand:patPat.abortAll",
     "onView:patPatActivityView",
-    "workspaceContains:.git"
+    "workspaceContains:.git",
+    "onCommand:patPat.newFeatPat",
+    "onCommand:patPat.runSession",
+    "onCommand:patPat.editSessionCommand"
   ],
   "main": "./dist/extension.js",
   "scripts": {
@@ -30,29 +33,49 @@
   "contributes": {
     "commands": [
       {
-        "command": "patPat.bootstrapFeature",
+        "command": "patPat.bootstrapIntegration",
         "category": "Pat Pat",
-        "title": "Bootstrap Pat Pat Feature"
+        "title": "Bootstrap inte-pat"
       },
       {
-        "command": "patPat.startFeature",
+        "command": "patPat.newFeatPat",
         "category": "Pat Pat",
-        "title": "Start Pat Pat Feature"
+        "title": "New feat-pat"
+      },
+      {
+        "command": "patPat.openFeature",
+        "category": "Pat Pat",
+        "title": "Open feat-pat"
+      },
+      {
+        "command": "patPat.runSession",
+        "category": "Pat Pat",
+        "title": "Run feat-pat session"
+      },
+      {
+        "command": "patPat.editSessionCommand",
+        "category": "Pat Pat",
+        "title": "Edit session start command"
+      },
+      {
+        "command": "patPat.configFeature",
+        "category": "Pat Pat",
+        "title": "Configure feat-pat"
       },
       {
         "command": "patPat.killAll",
         "category": "Pat Pat",
-        "title": "Kill All Pat Pat Terminals"
+        "title": "Kill All feat-pat Terminals"
       },
       {
         "command": "patPat.clearAll",
         "category": "Pat Pat",
-        "title": "Clear All Pat Pat Terminals"
+        "title": "Clear All feat-pat Terminals"
       },
       {
         "command": "patPat.abortAll",
         "category": "Pat Pat",
-        "title": "Abort All Pat Pat Terminals"
+        "title": "Abort All feat-pat Terminals"
       }
     ],
     "viewsContainers": {
@@ -75,12 +98,12 @@
     "menus": {
       "view/title": [
         {
-          "command": "patPat.bootstrapFeature",
+          "command": "patPat.bootstrapIntegration",
           "when": "view == patPatActivityView",
           "group": "navigation@1"
         },
         {
-          "command": "patPat.startFeature",
+          "command": "patPat.newFeatPat",
           "when": "view == patPatActivityView",
           "group": "navigation@2"
         },
@@ -92,9 +115,19 @@
       ],
       "view/item/context": [
         {
-          "command": "patPat.startFeature",
-          "when": "view == patPatActivityView && viewItem == patPat.feature",
+          "command": "patPat.runSession",
+          "when": "view == patPatActivityView && viewItem == patPat.session",
           "group": "inline@1"
+        },
+        {
+          "command": "patPat.editSessionCommand",
+          "when": "view == patPatActivityView && viewItem == patPat.session",
+          "group": "inline@2"
+        },
+        {
+          "command": "patPat.configFeature",
+          "when": "view == patPatActivityView && viewItem == patPat.feature",
+          "group": "inline@3"
         }
       ]
     }
@@ -102,6 +135,9 @@
   "devDependencies": {
     "@types/node": "^20.2.5",
     "@types/vscode": "^1.64.0",
+    "@typescript-eslint/eslint-plugin": "^8.44.1",
+    "@typescript-eslint/parser": "^8.44.1",
+    "eslint": "^9.36.0",
     "typescript": "^5.0.4"
   }
 }

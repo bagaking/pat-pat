@@ -3,6 +3,7 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 
 const execFileAsync = promisify(execFile);
+const INTEGRATION_SUFFIX = '__inte__';
 
 export class GitService {
     constructor(private readonly workspaceRoot: string) {}
@@ -12,6 +13,35 @@ export class GitService {
             cwd: this.workspaceRoot
         });
         return stdout.trim();
+    }
+
+    private sanitizeSegment(segment: string): string {
+        return segment.replace(/[^a-zA-Z0-9-_]/g, '-');
+    }
+
+    private buildBranchSegments(feature: string, parent?: string): string[] {
+        if (parent) {
+            const parentSegments = parent
+                .split('/')
+                .filter(Boolean)
+                .map((part) => this.sanitizeSegment(part));
+            parentSegments.push(this.sanitizeSegment(feature));
+            return parentSegments;
+        }
+        return [this.sanitizeSegment(feature), INTEGRATION_SUFFIX];
+    }
+
+    private async branchExists(branch: string): Promise<boolean> {
+        try {
+            await this.runGit(['rev-parse', '--verify', branch]);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private async renameBranch(oldName: string, newName: string): Promise<void> {
+        await this.runGit(['branch', '-m', oldName, newName]);
     }
 
     async isGitRepository(): Promise<boolean> {
@@ -32,27 +62,40 @@ export class GitService {
         }
     }
 
-    async checkoutPatPatBranch(feature: string): Promise<void> {
-        const branchName = this.toBranchName(feature);
-        try {
-            await this.runGit(['rev-parse', '--verify', branchName]);
-            await this.runGit(['checkout', branchName]);
-        } catch {
-            await this.runGit(['checkout', '-B', branchName]);
+    async checkoutPatPatBranch(feature: string, parent?: string): Promise<void> {
+        const branchName = this.toBranchName(feature, parent);
+        const exists = await this.branchExists(branchName);
+        if (exists) {
+            return;
+        }
+
+        if (!parent) {
+            const legacyBranch = `pat-pat/${this.sanitizeSegment(feature)}`;
+            if (await this.branchExists(legacyBranch)) {
+                await this.renameBranch(legacyBranch, branchName);
+                return;
+            }
+        }
+
+        if (parent) {
+            const parentBranch = this.toBranchNameFromId(parent);
+            const parentExists = await this.branchExists(parentBranch);
+            if (parentExists) {
+                await this.runGit(['branch', branchName, parentBranch]);
+                return;
+            }
+        }
+
+        const current = await this.getCurrentBranch();
+        if (current) {
+            await this.runGit(['branch', branchName, current]);
+        } else {
+            await this.runGit(['branch', branchName]);
         }
     }
 
-    async ensurePatPatBranch(currentBranch: string | undefined, defaultFeature: string): Promise<string | undefined> {
-        if (currentBranch && currentBranch.startsWith('pat-pat/')) {
-            return currentBranch.replace('pat-pat/', '');
-        }
-
-        await this.checkoutPatPatBranch(defaultFeature);
-        return defaultFeature;
-    }
-
-    async addWorktree(feature: string, destination: string): Promise<void> {
-        const branchName = this.toBranchName(feature);
+    async addWorktree(feature: string, destination: string, parent?: string): Promise<void> {
+        const branchName = this.toBranchName(feature, parent);
         await this.runGit(['worktree', 'add', destination, branchName]);
     }
 
@@ -88,8 +131,21 @@ export class GitService {
         }
     }
 
-    toBranchName(feature: string): string {
-        const safe = feature.replace(/[^a-zA-Z0-9-_]/g, '-');
-        return `pat-pat/${safe}`;
+    toBranchName(feature: string, parent?: string): string {
+        const segments = this.buildBranchSegments(feature, parent);
+        return `pat-pat/${segments.join('/')}`;
+    }
+
+    toBranchNameFromId(id: string): string {
+        const pieces = id.split('/').filter(Boolean);
+        if (pieces.length === 0) {
+            return 'pat-pat';
+        }
+        if (pieces.length === 1) {
+            return this.toBranchName(pieces[0]);
+        }
+        const feature = pieces.pop() as string;
+        const parent = pieces.join('/');
+        return this.toBranchName(feature, parent);
     }
 }

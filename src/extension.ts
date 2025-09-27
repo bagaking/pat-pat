@@ -21,9 +21,9 @@ export async function activate(context: ExtensionContext) {
 
     const syncState = (state: ExtensionState) => {
         treeProvider.setState(state);
-        const activeFeatureName = state.activeFeature ?? state.features.find((f) => f.status === 'running')?.feature;
-        const activeFeature = activeFeatureName
-            ? state.features.find((f) => f.feature === activeFeatureName)
+        const activeFeatureId = state.activeFeature ?? state.features.find((f) => f.status === 'running')?.id;
+        const activeFeature = activeFeatureId
+            ? state.features.find((f) => f.id === activeFeatureId)
             : undefined;
         statusIndicator.update(activeFeature);
     };
@@ -31,28 +31,93 @@ export async function activate(context: ExtensionContext) {
     const featureManager = new FeatureManager(workspaceRoot, git, store, syncState);
 
     await featureManager.initialize();
-    void featureManager.ensurePatPatBranch();
 
     context.subscriptions.push(window.registerTreeDataProvider('patPatActivityView', treeProvider));
 
     context.subscriptions.push(window.onDidCloseTerminal((terminal) => featureManager.handleTerminalClosed(terminal)));
 
     context.subscriptions.push(
-        commands.registerCommand('patPat.bootstrapFeature', async () => {
-            const feature = await featureManager.ensurePatPatBranch();
-            if (feature) {
-                await featureManager.bootstrapFeature(feature, folder);
-            }
+        commands.registerCommand('patPat.bootstrapIntegration', async () => {
+            await featureManager.bootstrapIntegration(folder);
         })
     );
 
     context.subscriptions.push(
-        commands.registerCommand('patPat.startFeature', async (featureArg?: string) => {
-            const featureName = await resolveFeatureName(featureArg, store);
-            if (!featureName) {
+        commands.registerCommand('patPat.newFeatPat', async () => {
+            await featureManager.createFeatPat(folder);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.openFeature', async (...args: unknown[]) => {
+            const featureArg = args[0];
+            const terminalArg = typeof args[1] === 'string' ? args[1] : undefined;
+            let reference = await resolveFeatureReference(featureArg);
+            if (!reference) {
+                reference = await pickFeatureReference(store);
+            }
+            if (!reference) {
                 return;
             }
-            await featureManager.startFeature(featureName);
+            const targetTerminal = terminalArg ?? reference.terminalName;
+            await featureManager.openFeature(reference.id, targetTerminal);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.configFeature', async (featureArg?: unknown) => {
+            let reference = await resolveFeatureReference(featureArg);
+            if (!reference) {
+                reference = await pickFeatureReference(store);
+            }
+            if (!reference) {
+                return;
+            }
+            await featureManager.configFeature(reference.id);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.runSession', async (...args: unknown[]) => {
+            const featureArg = args[0];
+            const explicitTerminal = typeof args[1] === 'string' ? args[1] : undefined;
+            let reference = await resolveFeatureReference(featureArg);
+            if (!reference) {
+                reference = await pickFeatureReference(store);
+            }
+            if (!reference) {
+                return;
+            }
+            let sessionName = explicitTerminal ?? reference.terminalName;
+            if (!sessionName) {
+                sessionName = await pickSessionName(reference.id, store);
+            }
+            if (!sessionName) {
+                return;
+            }
+            await featureManager.openFeature(reference.id, sessionName);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.editSessionCommand', async (...args: unknown[]) => {
+            const featureArg = args[0];
+            const explicitTerminal = typeof args[1] === 'string' ? args[1] : undefined;
+            let reference = await resolveFeatureReference(featureArg);
+            if (!reference) {
+                reference = await pickFeatureReference(store);
+            }
+            if (!reference) {
+                return;
+            }
+            let sessionName = explicitTerminal ?? reference.terminalName;
+            if (!sessionName) {
+                sessionName = await pickSessionName(reference.id, store);
+            }
+            if (!sessionName) {
+                return;
+            }
+            await featureManager.editSessionCommand(reference.id, sessionName);
         })
     );
 
@@ -61,28 +126,98 @@ export async function activate(context: ExtensionContext) {
     context.subscriptions.push(commands.registerCommand('patPat.abortAll', async () => featureManager.abortAll()));
 }
 
-async function resolveFeatureName(featureArg: string | undefined, store: StateStore): Promise<string | undefined> {
-    if (featureArg) {
-        return featureArg;
+async function resolveFeatureReference(featureArg: unknown): Promise<{ id: string; terminalName?: string } | undefined> {
+    if (typeof featureArg === 'string') {
+        return { id: featureArg };
     }
+    if (Array.isArray(featureArg)) {
+        const [candidateId, candidateTerminal] = featureArg;
+        if (typeof candidateId === 'string') {
+            return {
+                id: candidateId,
+                terminalName: typeof candidateTerminal === 'string' ? candidateTerminal : undefined
+            };
+        }
+    }
+    if (featureArg && typeof featureArg === 'object') {
+        const candidate = featureArg as { id?: unknown; featureId?: unknown; terminalName?: unknown; terminal?: unknown; feature?: unknown; parent?: unknown };
+        const terminalCandidate = candidate.terminal as { name?: unknown } | undefined;
+        const terminalName = typeof candidate.terminalName === 'string'
+            ? candidate.terminalName
+            : typeof terminalCandidate?.name === 'string'
+                ? terminalCandidate.name
+                : undefined;
+        const idCandidate = typeof candidate.id === 'string' ? candidate.id : typeof candidate.featureId === 'string' ? candidate.featureId : undefined;
+        if (idCandidate) {
+            return { id: idCandidate, terminalName };
+        }
+        if (candidate.feature && typeof candidate.feature === 'object') {
+            const snapshot = candidate.feature as { id?: unknown; feature?: unknown; parent?: unknown };
+            if (typeof snapshot.id === 'string') {
+                return { id: snapshot.id, terminalName };
+            }
+            if (typeof snapshot.feature === 'string') {
+                const parent = typeof snapshot.parent === 'string' ? snapshot.parent : undefined;
+                const composed = parent ? `${parent}/${snapshot.feature}` : snapshot.feature;
+                return { id: composed, terminalName };
+            }
+        }
+        if (typeof candidate.feature === 'string') {
+            const parent = typeof candidate.parent === 'string' ? candidate.parent : undefined;
+            const composed = parent ? `${parent}/${candidate.feature}` : candidate.feature;
+            return { id: composed, terminalName };
+        }
+    }
+    return undefined;
+}
 
+async function pickFeatureReference(store: StateStore): Promise<{ id: string } | undefined> {
     const state = await store.load();
     if (state.features.length === 0) {
-        void window.showWarningMessage('No Pat Pat features found. Bootstrap one first.');
+        void window.showWarningMessage('尚未找到 feat-pat，先运行 Bootstrap inte-pat。');
         return undefined;
     }
 
     if (state.features.length === 1) {
-        return state.features[0].feature;
+        return { id: state.features[0].id };
     }
 
-    const pick = await window.showQuickPick(
-        state.features.map((feature) => ({ label: feature.feature, description: feature.status })),
-        {
-            title: 'Select Pat Pat feature to start',
-            canPickMany: false
-        }
-    );
+    const items = state.features.map((feature) => ({
+        label: feature.parent ? `${feature.parent}/${feature.feature}` : feature.feature,
+        description: feature.status,
+        detail: feature.branch,
+        featureId: feature.id
+    }));
+    const pick = await window.showQuickPick(items, {
+        title: 'Select feat-pat',
+        canPickMany: false
+    });
+    return pick ? { id: pick.featureId } : undefined;
+}
+
+async function pickSessionName(featureId: string, store: StateStore): Promise<string | undefined> {
+    const state = await store.load();
+    const feature = state.features.find((candidate) => candidate.id === featureId);
+    if (!feature) {
+        void window.showWarningMessage(`未找到 feat-pat ${featureId}。`);
+        return undefined;
+    }
+    if (feature.terminals.length === 0) {
+        void window.showWarningMessage(`${featureId} 未配置任何 session。`);
+        return undefined;
+    }
+    if (feature.terminals.length === 1) {
+        return feature.terminals[0].name;
+    }
+    const items = feature.terminals.map((terminal) => ({
+        label: terminal.name,
+        description: terminal.status,
+        detail: terminal.startupCommand ?? undefined
+    }));
+    const pick = await window.showQuickPick(items, {
+        title: `Select session for ${featureId}`,
+        canPickMany: false
+    });
     return pick?.label;
 }
 

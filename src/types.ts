@@ -4,14 +4,17 @@ export type TerminalStatus = 'idle' | 'running';
 export interface TerminalSnapshot {
     name: string;
     status: TerminalStatus;
+    startupCommand?: string;
 }
 
 export interface FeatureSnapshot {
+    id: string;
     feature: string;
+    parent?: string;
     branch: string;
     worktreePath: string;
     icon: string;
-    color: string;
+    color?: string;
     status: FeatureStatus;
     lastStartedAt?: string;
     terminals: TerminalSnapshot[];
