@@ -21,9 +21,9 @@ export async function activate(context: ExtensionContext) {
 
     const syncState = (state: ExtensionState) => {
         treeProvider.setState(state);
-        const activeFeatureName = state.activeFeature ?? state.features.find((f) => f.status === 'running')?.feature;
-        const activeFeature = activeFeatureName
-            ? state.features.find((f) => f.feature === activeFeatureName)
+        const activeFeatureId = state.activeFeature ?? state.features.find((f) => f.status === 'running')?.id;
+        const activeFeature = activeFeatureId
+            ? state.features.find((f) => f.id === activeFeatureId)
             : undefined;
         statusIndicator.update(activeFeature);
     };
@@ -31,28 +31,40 @@ export async function activate(context: ExtensionContext) {
     const featureManager = new FeatureManager(workspaceRoot, git, store, syncState);
 
     await featureManager.initialize();
-    void featureManager.ensurePatPatBranch();
 
     context.subscriptions.push(window.registerTreeDataProvider('patPatActivityView', treeProvider));
 
     context.subscriptions.push(window.onDidCloseTerminal((terminal) => featureManager.handleTerminalClosed(terminal)));
 
     context.subscriptions.push(
-        commands.registerCommand('patPat.bootstrapFeature', async () => {
-            const feature = await featureManager.ensurePatPatBranch();
-            if (feature) {
-                await featureManager.bootstrapFeature(feature, folder);
-            }
+        commands.registerCommand('patPat.bootstrapIntegration', async () => {
+            await featureManager.bootstrapIntegration(folder);
         })
     );
 
     context.subscriptions.push(
-        commands.registerCommand('patPat.startFeature', async (featureArg?: string) => {
-            const featureName = await resolveFeatureName(featureArg, store);
-            if (!featureName) {
+        commands.registerCommand('patPat.newFeatPat', async () => {
+            await featureManager.createFeatPat(folder);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.startFeature', async (featureArg?: unknown) => {
+            const featureId = await resolveFeatureId(featureArg, store);
+            if (!featureId) {
                 return;
             }
-            await featureManager.startFeature(featureName);
+            await featureManager.startFeature(featureId);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.customizeFeature', async (featureArg?: unknown) => {
+            const featureId = await resolveFeatureId(featureArg, store);
+            if (!featureId) {
+                return;
+            }
+            await featureManager.customizeFeature(featureId);
         })
     );
 
@@ -61,29 +73,52 @@ export async function activate(context: ExtensionContext) {
     context.subscriptions.push(commands.registerCommand('patPat.abortAll', async () => featureManager.abortAll()));
 }
 
-async function resolveFeatureName(featureArg: string | undefined, store: StateStore): Promise<string | undefined> {
-    if (featureArg) {
+async function resolveFeatureId(featureArg: unknown, store: StateStore): Promise<string | undefined> {
+    if (typeof featureArg === 'string') {
         return featureArg;
+    }
+    if (featureArg && typeof featureArg === 'object') {
+        const candidate = featureArg as { id?: unknown; feature?: unknown; parent?: unknown };
+        if (typeof candidate.id === 'string') {
+            return candidate.id;
+        }
+        if (candidate.feature && typeof candidate.feature === 'object') {
+            const snapshot = candidate.feature as { id?: unknown; feature?: unknown; parent?: unknown };
+            if (typeof snapshot.id === 'string') {
+                return snapshot.id;
+            }
+            if (typeof snapshot.feature === 'string') {
+                const parent = typeof snapshot.parent === 'string' ? snapshot.parent : undefined;
+                return parent ? `${parent}/${snapshot.feature}` : snapshot.feature;
+            }
+        }
+        if (typeof candidate.feature === 'string') {
+            const parent = typeof candidate.parent === 'string' ? candidate.parent : undefined;
+            return parent ? `${parent}/${candidate.feature}` : candidate.feature;
+        }
     }
 
     const state = await store.load();
     if (state.features.length === 0) {
-        void window.showWarningMessage('No Pat Pat features found. Bootstrap one first.');
+        void window.showWarningMessage('尚未找到 feat-pat，先运行 Bootstrap inte-pat。');
         return undefined;
     }
 
     if (state.features.length === 1) {
-        return state.features[0].feature;
+        return state.features[0].id;
     }
 
-    const pick = await window.showQuickPick(
-        state.features.map((feature) => ({ label: feature.feature, description: feature.status })),
-        {
-            title: 'Select Pat Pat feature to start',
-            canPickMany: false
-        }
-    );
-    return pick?.label;
+    const items = state.features.map((feature) => ({
+        label: feature.parent ? `${feature.parent}/${feature.feature}` : feature.feature,
+        description: feature.status,
+        detail: feature.branch,
+        featureId: feature.id
+    }));
+    const pick = await window.showQuickPick(items, {
+        title: 'Select feat-pat',
+        canPickMany: false
+    });
+    return pick?.featureId;
 }
 
 export function deactivate() {

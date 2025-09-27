@@ -7,11 +7,13 @@ export interface TerminalSnapshot {
 }
 
 export interface FeatureSnapshot {
+    id: string;
     feature: string;
+    parent?: string;
     branch: string;
     worktreePath: string;
     icon: string;
-    color: string;
+    color?: string;
     status: FeatureStatus;
     lastStartedAt?: string;
     terminals: TerminalSnapshot[];

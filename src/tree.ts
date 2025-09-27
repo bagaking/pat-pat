@@ -1,18 +1,23 @@
-import { Event, EventEmitter, ThemeIcon, TreeDataProvider, TreeItem, TreeItemCollapsibleState } from 'vscode';
+import { Event, EventEmitter, ThemeColor, ThemeIcon, TreeDataProvider, TreeItem, TreeItemCollapsibleState } from 'vscode';
 import { ExtensionState, FeatureSnapshot } from './types';
 
 class FeatureTreeItem extends TreeItem {
-    constructor(readonly feature: FeatureSnapshot) {
-        super(feature.feature, TreeItemCollapsibleState.Collapsed);
+    constructor(readonly feature: FeatureSnapshot, collapsibleState: TreeItemCollapsibleState) {
+        super(feature.feature, collapsibleState);
         this.description = feature.status;
-        this.iconPath = new ThemeIcon(feature.status === 'running' ? 'sync~spin' : 'circle-small-filled');
-        this.contextValue = 'patPat.feature';
-        this.tooltip = `${feature.branch}\n${feature.worktreePath}`;
-        this.command = {
-            title: 'Start Pat Pat Feature',
-            command: 'patPat.startFeature',
-            arguments: [feature.feature]
-        };
+        this.contextValue = feature.parent ? 'patPat.feature' : 'patPat.integration';
+        const iconName = feature.status === 'running' ? 'sync~spin' : feature.icon;
+        const iconColor = feature.status === 'running' ? undefined : feature.color ? new ThemeColor(feature.color) : undefined;
+        this.iconPath = new ThemeIcon(iconName, iconColor);
+        const location = feature.worktreePath === '.' ? '.' : feature.worktreePath;
+        this.tooltip = `${feature.branch}\n${location}`;
+        if (feature.parent) {
+            this.command = {
+                title: 'Start feat-pat',
+                command: 'patPat.startFeature',
+                arguments: [feature.id]
+            };
+        }
     }
 }
 
@@ -47,13 +52,28 @@ export class PatPatTreeProvider implements TreeDataProvider<TreeItem> {
 
     getChildren(element?: TreeItem): TreeItem[] {
         if (!element) {
-            return this.state.features.map((feature) => new FeatureTreeItem(feature));
+            return this.state.features
+                .filter((feature) => !feature.parent)
+                .map((feature) => this.createFeatureItem(feature));
         }
         if (element instanceof FeatureTreeItem) {
-            return element.feature.terminals.map(
-                (terminal) => new TerminalTreeItem(element.feature, terminal.name, terminal.status)
+            const feature =
+                this.state.features.find((candidate) => candidate.id === element.feature.id) || element.feature;
+            const childFeatures = this.state.features
+                .filter((candidate) => candidate.parent === feature.id)
+                .map((child) => this.createFeatureItem(child));
+            const terminals = feature.terminals.map(
+                (terminal) => new TerminalTreeItem(feature, terminal.name, terminal.status)
             );
+            return [...childFeatures, ...terminals];
         }
         return [];
+    }
+
+    private createFeatureItem(feature: FeatureSnapshot): FeatureTreeItem {
+        const hasChildren =
+            this.state.features.some((candidate) => candidate.parent === feature.id) || feature.terminals.length > 0;
+        const collapsibleState = hasChildren ? TreeItemCollapsibleState.Collapsed : TreeItemCollapsibleState.None;
+        return new FeatureTreeItem(feature, collapsibleState);
     }
 }

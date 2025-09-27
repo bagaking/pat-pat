@@ -3,6 +3,8 @@ import * as path from 'path';
 import { ExtensionState, FeatureSnapshot, FeatureStatus, TerminalStatus } from './types';
 
 const DEFAULT_STATE: ExtensionState = { features: [] };
+const INTEGRATION_BRANCH_SUFFIX = '__inte__';
+const sanitizeSegment = (segment: string): string => segment.replace(/[^a-zA-Z0-9-_]/g, '-');
 
 export class StateStore {
     readonly patPatDir: string;
@@ -24,7 +26,40 @@ export class StateStore {
     async load(): Promise<ExtensionState> {
         try {
             const raw = await fs.readFile(this.stateFile, 'utf8');
-            return JSON.parse(raw) as ExtensionState;
+            const parsed = JSON.parse(raw) as ExtensionState;
+            let mutated = false;
+            parsed.features = parsed.features.map((feature) => {
+                const derivedId = feature.id || (feature.parent ? `${feature.parent}/${feature.feature}` : feature.feature);
+                const worktreePath = feature.worktreePath && path.isAbsolute(feature.worktreePath)
+                    ? path.relative(this.workspaceRoot, feature.worktreePath) || '.'
+                    : feature.worktreePath ?? '.';
+                let branch = feature.branch;
+                if (!feature.parent) {
+                    const safeRoot = sanitizeSegment(derivedId);
+                    const expectedBranch = `pat-pat/${safeRoot}/${INTEGRATION_BRANCH_SUFFIX}`;
+                    if (branch !== expectedBranch) {
+                        branch = expectedBranch;
+                        mutated = true;
+                    }
+                }
+                if (feature.id !== derivedId || feature.worktreePath !== worktreePath || feature.branch !== branch) {
+                    mutated = true;
+                }
+                return { ...feature, id: derivedId, worktreePath, branch } as FeatureSnapshot;
+            });
+            if (parsed.activeFeature) {
+                const active = parsed.features.find(
+                    (feature) => feature.id === parsed.activeFeature || feature.feature === parsed.activeFeature
+                );
+                if (active?.id && parsed.activeFeature !== active.id) {
+                    parsed.activeFeature = active.id;
+                    mutated = true;
+                }
+            }
+            if (mutated) {
+                await this.save(parsed);
+            }
+            return parsed;
         } catch {
             return { ...DEFAULT_STATE };
         }
@@ -36,7 +71,7 @@ export class StateStore {
 
     async upsertFeature(feature: FeatureSnapshot): Promise<ExtensionState> {
         const state = await this.load();
-        const existingIndex = state.features.findIndex((f) => f.feature === feature.feature);
+        const existingIndex = state.features.findIndex((f) => f.id === feature.id);
         if (existingIndex >= 0) {
             state.features[existingIndex] = feature;
         } else {
@@ -46,9 +81,13 @@ export class StateStore {
         return state;
     }
 
-    async updateFeatureStatus(featureName: string, status: FeatureStatus, terminals?: { name: string; status: TerminalStatus }[]): Promise<ExtensionState> {
+    async updateFeatureStatus(
+        featureId: string,
+        status: FeatureStatus,
+        terminals?: { name: string; status: TerminalStatus }[]
+    ): Promise<ExtensionState> {
         const state = await this.load();
-        const feature = state.features.find((f) => f.feature === featureName);
+        const feature = state.features.find((f) => f.id === featureId);
         if (!feature) {
             return state;
         }
@@ -62,19 +101,19 @@ export class StateStore {
         }
         if (status === 'running') {
             feature.lastStartedAt = new Date().toISOString();
-            state.activeFeature = featureName;
+            state.activeFeature = featureId;
         }
-        if (status === 'idle' && state.activeFeature === featureName) {
+        if (status === 'idle' && state.activeFeature === featureId) {
             state.activeFeature = undefined;
         }
         await this.save(state);
         return state;
     }
 
-    async removeFeature(featureName: string): Promise<ExtensionState> {
+    async removeFeature(featureId: string): Promise<ExtensionState> {
         const state = await this.load();
-        state.features = state.features.filter((f) => f.feature !== featureName);
-        if (state.activeFeature === featureName) {
+        state.features = state.features.filter((f) => f.id !== featureId);
+        if (state.activeFeature === featureId) {
             state.activeFeature = undefined;
         }
         await this.save(state);
