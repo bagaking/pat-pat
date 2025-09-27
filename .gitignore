@@ -2,3 +2,5 @@ node_modules/
 dist/
 .pat-pat/
 .vscode/
+.pat-pat/.archived/
+.s*/

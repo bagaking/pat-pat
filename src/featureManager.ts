@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import { window, workspace, Terminal, TerminalOptions, WorkspaceFolder, ThemeIcon, ThemeColor } from 'vscode';
 import { GitService } from './gitService';
 import { StateStore } from './stateStore';
-import { ExtensionState, FeatureSnapshot, FeatureStatus, TerminalSnapshot, TerminalStatus } from './types';
+import { ExtensionState, FeatureArchiveEntry, FeatureAttachments, FeatureSnapshot, FeatureStatus, TerminalSnapshot, TerminalStatus } from './types';
 import { randomChoice } from './utils';
 
 const ICONS = ['terminal', 'rocket', 'git-branch', 'pulse', 'zap', 'flame', 'beaker'];
@@ -11,6 +11,8 @@ const COLORS = ['terminal.ansiGreen', 'terminal.ansiCyan', 'terminal.ansiBlue', 
 const INTEGRATION_NAME = 'integration';
 const INTEGRATION_TERMINALS = ['inte'];
 const FEATURE_TERMINALS = ['feat'];
+const ARCHIVE_DIRECTORY = '.archived';
+const RECONCILE_INTERVAL_MS = 15000;
 
 type FeatureRuntime = {
     feature: FeatureSnapshot;
@@ -23,22 +25,45 @@ type FeatureCreationContext = {
     workspaceFolder?: WorkspaceFolder;
 };
 
+type ArchiveOutcome = {
+    archivePath?: string;
+    branchDeleted?: boolean;
+    branchDeleteError?: string;
+    worktreeRemoved?: boolean;
+    worktreeRemoveError?: string;
+};
+
 export class FeatureManager {
     private state: ExtensionState | undefined;
     private readonly runtime = new Map<string, FeatureRuntime>();
     private readonly diagnosticsChannel = window.createOutputChannel('Pat Pat Diagnose');
+    private readonly archiveRoot: string;
+    private reconcileTimer: NodeJS.Timeout | undefined;
+    private reconciling = false;
 
     constructor(
         private readonly workspaceRoot: string,
         private readonly git: GitService,
         private readonly store: StateStore,
         private readonly onStateChange: (state: ExtensionState) => void
-    ) {}
+    ) {
+        this.archiveRoot = path.join(this.workspaceRoot, '.pat-pat', ARCHIVE_DIRECTORY);
+    }
 
     async initialize(): Promise<void> {
         await this.store.ensureScaffolding();
+        await fs.mkdir(this.archiveRoot, { recursive: true });
         this.state = await this.store.load();
+        await this.reconcileState();
         this.emitState();
+        this.startStateMonitor();
+    }
+
+    dispose(): void {
+        if (this.reconcileTimer) {
+            clearInterval(this.reconcileTimer);
+            this.reconcileTimer = undefined;
+        }
     }
 
     async bootstrapIntegration(workspaceFolder?: WorkspaceFolder): Promise<void> {
@@ -71,6 +96,15 @@ export class FeatureManager {
         const feature = this.state?.features.find((f) => f.id === featureId);
         if (!feature) {
             void window.showWarningMessage(`Feature ${featureId} not found. Bootstrap inte-pat/feat-pat first.`);
+            return;
+        }
+
+        const attachments = feature.attachments ?? await this.inspectAttachments(feature);
+        if (!feature.attachments || !this.attachmentsEqual(feature.attachments, attachments)) {
+            this.state = await this.store.updateFeatureAttachments(feature.id, attachments);
+        }
+        if (!attachments.branch || !attachments.worktree || !attachments.directory) {
+            void window.showWarningMessage(`${this.describeFeature(feature)} 处于未对齐状态，请先运行 Diagnose 或使用归档命令处理。`);
             return;
         }
 
@@ -133,6 +167,14 @@ export class FeatureManager {
         const feature = this.state?.features.find((f) => f.id === featureId);
         if (!feature) {
             void window.showWarningMessage(`Feature ${featureId} not found. Bootstrap inte-pat/feat-pat first.`);
+            return;
+        }
+        const attachments = feature.attachments ?? await this.inspectAttachments(feature);
+        if (!feature.attachments || !this.attachmentsEqual(feature.attachments, attachments)) {
+            this.state = await this.store.updateFeatureAttachments(feature.id, attachments);
+        }
+        if (!attachments.branch || !attachments.worktree || !attachments.directory) {
+            void window.showWarningMessage(`${this.describeFeature(feature)} 处于未对齐状态，无法配置。请先归档或修复。`);
             return;
         }
         const runningSession = feature.terminals.find((session) => session.status === 'running')?.name;
@@ -216,6 +258,14 @@ export class FeatureManager {
             void window.showWarningMessage(`Feature ${featureId} not found. Bootstrap inte-pat/feat-pat first.`);
             return;
         }
+        const attachments = feature.attachments ?? await this.inspectAttachments(feature);
+        if (!feature.attachments || !this.attachmentsEqual(feature.attachments, attachments)) {
+            this.state = await this.store.updateFeatureAttachments(feature.id, attachments);
+        }
+        if (!attachments.branch || !attachments.worktree || !attachments.directory) {
+            void window.showWarningMessage(`${this.describeFeature(feature)} 处于未对齐状态，无法更新 session。`);
+            return;
+        }
         const terminal = feature.terminals.find((session) => session.name === sessionName);
         if (!terminal) {
             void window.showWarningMessage(`Session ${sessionName} not found under ${featureId}.`);
@@ -268,6 +318,191 @@ export class FeatureManager {
         window.terminals.forEach((terminal) => terminal.sendText('\u0003', false));
     }
 
+    async archiveFeature(featureId: string, reason = 'Manual archive'): Promise<void> {
+        await this.ensureState();
+        const feature = this.state?.features.find((f) => f.id === featureId);
+        if (!feature) {
+            void window.showWarningMessage(`未找到 feat-pat ${featureId}。`);
+            return;
+        }
+        const runtime = this.runtime.get(featureId);
+        if (runtime) {
+            void window.showWarningMessage(`${this.describeFeature(feature)} 有终端正在运行，请先关闭后再归档。`);
+            return;
+        }
+        if (feature.status === 'running') {
+            void window.showWarningMessage(`${this.describeFeature(feature)} 仍标记为 running，请先停止 session。`);
+            return;
+        }
+        const attachments = await this.inspectAttachments(feature);
+        if (attachments.directory && feature.worktreePath !== '.') {
+            const absolutePath = this.resolveWorktreePath(feature);
+            const dirty = await this.git.isWorktreeDirty(absolutePath);
+            if (dirty) {
+                void window.showWarningMessage(`${this.describeFeature(feature)} 的 worktree 存在未提交改动，请手工处理后再归档。`);
+                return;
+            }
+        }
+
+        const mode = await this.promptArchiveMode(feature, attachments);
+        if (!mode) {
+            return;
+        }
+        const deleteBranch = mode === 'archive-and-delete';
+
+        const outcome = await this.archiveFeatureInternal(feature, reason, attachments, deleteBranch);
+        this.emitState();
+
+        const lines: string[] = [];
+        if (outcome.archivePath) {
+            lines.push(`工作树已归档至 ${outcome.archivePath}`);
+        }
+        if (deleteBranch) {
+            if (outcome.worktreeRemoved) {
+                lines.push('Git worktree 已清理');
+            } else if (outcome.worktreeRemoveError) {
+                lines.push(`Git worktree 清理失败：${outcome.worktreeRemoveError}`);
+            }
+            if (outcome.branchDeleted) {
+                lines.push(`分支 ${feature.branch} 已删除`);
+            } else if (outcome.branchDeleteError) {
+                lines.push(`分支 ${feature.branch} 未删除：${outcome.branchDeleteError}`);
+            }
+        }
+        const message = lines.length > 0
+            ? `${this.describeFeature(feature)} 已归档：` + lines.join('；')
+            : `${this.describeFeature(feature)} 已归档。`;
+        void window.showInformationMessage(message);
+    }
+
+    private async archiveFeatureInternal(
+        feature: FeatureSnapshot,
+        reason: string,
+        attachments?: FeatureAttachments,
+        deleteBranch = false
+    ): Promise<ArchiveOutcome> {
+        const resolvedAttachments = attachments ?? await this.inspectAttachments(feature);
+        let archivePath: string | undefined;
+        if (resolvedAttachments.directory && feature.worktreePath !== '.') {
+            const preserveOriginal = deleteBranch && resolvedAttachments.worktree;
+            archivePath = await this.moveDirectoryToArchive(this.resolveWorktreePath(feature), feature.id, preserveOriginal);
+        }
+        const entry: FeatureArchiveEntry = {
+            originalId: feature.id,
+            archivedAt: new Date().toISOString(),
+            archivePath,
+            reason,
+            attachments: resolvedAttachments,
+            snapshot: { ...feature, attachments: resolvedAttachments }
+        };
+        this.runtime.delete(feature.id);
+        this.state = await this.store.archiveFeature(feature.id, entry);
+
+        let branchDeleted = false;
+        let branchDeleteError: string | undefined;
+        let worktreeRemoved = false;
+        let worktreeRemoveError: string | undefined;
+        if (deleteBranch && resolvedAttachments.branch && feature.parent) {
+            const absolutePath = this.resolveWorktreePath(feature);
+            if (resolvedAttachments.worktree && feature.worktreePath !== '.') {
+                try {
+                    await this.git.removeWorktree(absolutePath, true);
+                    worktreeRemoved = true;
+                } catch (error) {
+                    worktreeRemoveError = String(error);
+                }
+            }
+            if (!worktreeRemoveError) {
+                try {
+                    await this.git.deleteBranchByName(feature.branch, false);
+                    branchDeleted = true;
+                } catch (error) {
+                    branchDeleteError = String(error);
+                }
+            }
+        }
+
+        return { archivePath, branchDeleted, branchDeleteError, worktreeRemoved, worktreeRemoveError };
+    }
+
+    private async moveDirectoryToArchive(source: string, identifier: string, preserveOriginal = false): Promise<string | undefined> {
+        if (!(await this.pathExists(source))) {
+            return undefined;
+        }
+        if (source === this.workspaceRoot) {
+            return undefined;
+        }
+        await fs.mkdir(this.archiveRoot, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const sanitized = identifier.replace(/[\/:]/g, '-');
+        let target = path.join(this.archiveRoot, `${sanitized}-${timestamp}`);
+        let suffix = 1;
+        while (await this.pathExists(target)) {
+            target = path.join(this.archiveRoot, `${sanitized}-${timestamp}-${suffix}`);
+            suffix += 1;
+        }
+        if (preserveOriginal) {
+            await fs.mkdir(path.dirname(target), { recursive: true });
+            await fs.cp(source, target, { recursive: true });
+        } else {
+            try {
+                await fs.rename(source, target);
+            } catch {
+                await fs.mkdir(path.dirname(target), { recursive: true });
+                await fs.cp(source, target, { recursive: true });
+                await fs.rm(source, { recursive: true, force: true });
+            }
+        }
+        return target;
+    }
+
+    private startStateMonitor(): void {
+        if (this.reconcileTimer) {
+            clearInterval(this.reconcileTimer);
+        }
+        this.reconcileTimer = setInterval(() => {
+            void this.reconcileAndEmit();
+        }, RECONCILE_INTERVAL_MS);
+    }
+
+    private async reconcileAndEmit(): Promise<void> {
+        if (this.reconciling) {
+            return;
+        }
+        this.reconciling = true;
+        try {
+            const before = this.stateSignature(this.state);
+            await this.reconcileState();
+            const after = this.stateSignature(this.state);
+            if (before !== after) {
+                this.emitState();
+            }
+        } finally {
+            this.reconciling = false;
+        }
+    }
+
+    private stateSignature(state: ExtensionState | undefined): string {
+        if (!state) {
+            return 'undefined';
+        }
+        return JSON.stringify(state.features.map((feature) => ({
+            id: feature.id,
+            status: feature.status,
+            attachments: feature.attachments
+        })));
+    }
+
+    private async archiveFeatureById(featureId: string, reason: string): Promise<void> {
+        await this.ensureState();
+        const feature = this.state?.features.find((f) => f.id === featureId);
+        if (!feature) {
+            return;
+        }
+        await this.archiveFeatureInternal(feature, reason);
+        this.emitState();
+    }
+
     handleTerminalClosed(terminal: Terminal): void {
         for (const [featureId, runtime] of this.runtime.entries()) {
             const index = runtime.terminals.findIndex((t) => t === terminal);
@@ -281,6 +516,88 @@ export class FeatureManager {
                 }
                 break;
             }
+        }
+    }
+
+    private async reconcileState(): Promise<void> {
+        if (!this.state) {
+            return;
+        }
+        const features = [...this.state.features];
+        for (const feature of features) {
+            const attachments = await this.inspectAttachments(feature);
+            const previous = feature.attachments;
+            const attachmentsChanged = !previous || !this.attachmentsEqual(previous, attachments);
+            const shouldMarkMissing = (!attachments.branch || !attachments.worktree || !attachments.directory) && feature.status !== 'running';
+            const shouldRecover = attachments.branch && attachments.worktree && attachments.directory && feature.status === 'missing';
+            if (attachmentsChanged || shouldMarkMissing || shouldRecover) {
+                this.state = await this.store.updateFeatureAttachments(feature.id, attachments);
+            }
+        }
+        this.state = await this.store.load();
+    }
+
+    private attachmentsEqual(a: FeatureAttachments | undefined, b: FeatureAttachments): boolean {
+        if (!a) {
+            return false;
+        }
+        return a.branch === b.branch && a.worktree === b.worktree && a.directory === b.directory;
+    }
+
+    private async promptArchiveMode(feature: FeatureSnapshot, attachments: FeatureAttachments): Promise<'archive-only' | 'archive-and-delete' | undefined> {
+        const canDelete = this.canDeleteBranch(feature, attachments);
+        const items: { label: string; detail?: string; id: 'archive-only' | 'archive-and-delete' }[] = [
+            {
+                label: '仅归档',
+                detail: '移动工作树至 .pat-pat/.archived，保留 Git 分支',
+                id: 'archive-only'
+            }
+        ];
+        if (canDelete) {
+            items.unshift({
+                label: '归档并删除分支',
+                detail: `执行 git branch -d ${feature.branch}`
+                    + (attachments.worktree ? '（需要清理 worktree）' : ''),
+                id: 'archive-and-delete'
+            });
+        }
+        const pick = await window.showQuickPick(items, {
+            title: `归档 ${this.describeFeature(feature)}`,
+            placeHolder: 'Esc 取消操作',
+            canPickMany: false
+        });
+        return pick?.id;
+    }
+
+    private canDeleteBranch(feature: FeatureSnapshot, attachments: FeatureAttachments): boolean {
+        return !!feature.parent && attachments.branch;
+    }
+
+    private async inspectAttachments(feature: FeatureSnapshot): Promise<FeatureAttachments> {
+        const absolutePath = this.resolveWorktreePath(feature);
+        const branchExists = await this.git.branchExists(feature.branch);
+        const worktreeExists = feature.worktreePath === '.' ? true : await this.git.hasWorktree(absolutePath);
+        const directoryExists = await this.pathExists(absolutePath);
+        return {
+            branch: branchExists,
+            worktree: worktreeExists,
+            directory: directoryExists
+        };
+    }
+
+    private async reconcileConflictingWorktree(featureId: string, featureDir: string): Promise<void> {
+        const directoryExists = await this.pathExists(featureDir);
+        if (!directoryExists) {
+            return;
+        }
+        const conflict = this.state?.features.find((feature) => feature.id === featureId);
+        if (conflict) {
+            await this.archiveFeatureById(conflict.id, 'Detected conflicting worktree while bootstrapping');
+            return;
+        }
+        const archivedPath = await this.moveDirectoryToArchive(featureDir, featureId);
+        if (archivedPath) {
+            void window.showInformationMessage(`检测到残留目录 ${featureDir}，已迁移至 ${archivedPath}。`);
         }
     }
 
@@ -347,6 +664,7 @@ export class FeatureManager {
         parent,
         workspaceFolder
     }: FeatureCreationContext): Promise<void> {
+        await this.ensureState();
         const folder = workspaceFolder ?? this.getFirstWorkspaceFolder();
         if (!folder) {
             void window.showWarningMessage('Open a workspace folder to manage feat-pat.');
@@ -358,6 +676,7 @@ export class FeatureManager {
         const parentId = parent?.id;
         const baseDir = path.join(folder.uri.fsPath, '.pat-pat');
         const parentSegments = parentId ? parentId.split('/') : [];
+        const featureId = parentId ? `${parentId}/${featureName}` : featureName;
         const defaultDir = path.join(baseDir, ...parentSegments, featureName);
 
         const targetBranch = this.git.toBranchName(featureName, parentId);
@@ -369,6 +688,7 @@ export class FeatureManager {
             await fs.mkdir(defaultDir, { recursive: true });
         } else {
             await fs.mkdir(path.dirname(featureDir), { recursive: true });
+            await this.reconcileConflictingWorktree(featureId, featureDir);
         }
 
         if (!usingWorkspaceRoot && currentBranch === targetBranch) {
@@ -391,12 +711,12 @@ export class FeatureManager {
         }
 
         const relativeWorktreePath = usingWorkspaceRoot ? '.' : path.relative(this.workspaceRoot, featureDir) || '.';
-        const featureId = parentId ? `${parentId}/${featureName}` : featureName;
         const existing = this.state?.features.find((f) => f.id === featureId);
         const icon = existing?.icon ?? randomChoice(ICONS);
         const color = existing?.color ?? (parentId ? randomChoice(COLORS) : undefined);
         const terminals = existing?.terminals ?? this.getDefaultTerminals(parentId);
         const status = existing?.status ?? 'idle';
+        const attachments: FeatureAttachments = { branch: true, worktree: true, directory: true };
 
         const snapshot: FeatureSnapshot = {
             id: featureId,
@@ -407,7 +727,8 @@ export class FeatureManager {
             icon,
             color,
             status,
-            terminals
+            terminals,
+            attachments
         };
 
         this.state = await this.store.upsertFeature(snapshot);
@@ -518,128 +839,122 @@ async diagnoseSessions(): Promise<void> {
     channel.show(true);
 }
 
-async removeFeatPat(featureId: string): Promise<void> {
-    await this.ensureState();
-    const feature = this.state?.features.find((f) => f.id === featureId);
-    if (!feature) {
-        void window.showWarningMessage(`未找到 feat-pat ${featureId}。`);
-        return;
-    }
-    if (!feature.parent) {
-        void window.showWarningMessage('inte-pat 需要手动清理或重新 bootstrap。');
-        return;
-    }
-
-    const absolutePath = this.resolveWorktreePath(feature);
-    const branchExists = await this.git.branchExists(feature.branch);
-    const worktreeExists = await this.git.hasWorktree(absolutePath);
-    const directoryExists = await this.pathExists(absolutePath);
-    const currentBranch = await this.git.getCurrentBranch();
-    if (branchExists && currentBranch === feature.branch) {
-        void window.showWarningMessage(`当前 workspace 正在检出 ${feature.branch}，请先切换到其他分支。`);
-        return;
-    }
-
-    const dirty = worktreeExists ? await this.git.isWorktreeDirty(absolutePath) : false;
-    let force = false;
-    if (dirty) {
-        const decision = await window.showWarningMessage(
-            `${featureId} 的 worktree 存在未提交改动。`,
-            { modal: true },
-            'Force remove',
-            '取消'
-        );
-        if (decision !== 'Force remove') {
+    async removeFeatPat(featureId: string): Promise<void> {
+        await this.ensureState();
+        const feature = this.state?.features.find((f) => f.id === featureId);
+        if (!feature) {
+            void window.showWarningMessage(`未找到 feat-pat ${featureId}。`);
             return;
         }
-        force = true;
-    } else {
-        const decision = await window.showWarningMessage(`确认删除 feat-pat ${featureId}？`, { modal: true }, 'Remove', '取消');
-        if (decision !== 'Remove') {
+        if (!feature.parent) {
+            void window.showWarningMessage('inte-pat 需要手动清理或重新 bootstrap。');
             return;
         }
-    }
 
-    const runtime = this.runtime.get(featureId);
-    if (runtime) {
-        runtime.terminals.forEach((terminal) => terminal.dispose());
-        this.runtime.delete(featureId);
-    }
+        const attachments = feature.attachments ?? await this.inspectAttachments(feature);
+        if (!feature.attachments || !this.attachmentsEqual(feature.attachments, attachments)) {
+            this.state = await this.store.updateFeatureAttachments(feature.id, attachments);
+        }
 
-    const statusPayload = this.toTerminalStatus(feature);
-    await this.updateFeatureStatus(featureId, 'idle', statusPayload);
-
-    if (worktreeExists) {
-        try {
-            await this.git.removeWorktree(absolutePath, force);
-        } catch (error) {
-            void window.showErrorMessage(`移除 worktree 失败：${String(error)}`);
+        const absolutePath = this.resolveWorktreePath(feature);
+        const currentBranch = await this.git.getCurrentBranch();
+        if (attachments.branch && currentBranch === feature.branch) {
+            void window.showWarningMessage(`当前 workspace 正在检出 ${feature.branch}，请先切换到其他分支。`);
             return;
         }
-    }
 
-    if (directoryExists && feature.worktreePath !== '.') {
-        await this.removeDirectory(absolutePath);
-    }
+        if (attachments.directory && feature.worktreePath !== '.') {
+            const dirty = await this.git.isWorktreeDirty(absolutePath);
+            if (dirty) {
+                void window.showWarningMessage(`${this.describeFeature(feature)} 的 worktree 存在未提交改动，请手工处理后再归档。`);
+                return;
+            }
+        }
 
-    if (branchExists) {
-        try {
-            await this.git.deleteBranchByName(feature.branch, force);
-        } catch (error) {
-            void window.showErrorMessage(`删除分支失败：${String(error)}`);
+        const mode = await this.promptArchiveMode(feature, attachments);
+        if (!mode) {
             return;
         }
+        const deleteBranch = mode === 'archive-and-delete';
+
+        const outcome = await this.archiveFeatureInternal(feature, 'Remove feat-pat command', attachments, deleteBranch);
+        this.emitState();
+
+        const lines: string[] = [];
+        if (outcome.archivePath) {
+            lines.push(`工作树已归档至 ${outcome.archivePath}`);
+        }
+        if (deleteBranch) {
+            if (outcome.worktreeRemoved) {
+                lines.push('Git worktree 已清理');
+            } else if (outcome.worktreeRemoveError) {
+                lines.push(`Git worktree 清理失败：${outcome.worktreeRemoveError}`);
+            }
+            if (outcome.branchDeleted) {
+                lines.push(`分支 ${feature.branch} 已删除`);
+            } else if (outcome.branchDeleteError) {
+                lines.push(`分支 ${feature.branch} 未删除：${outcome.branchDeleteError}`);
+            }
+        } else {
+            lines.push(`分支 ${feature.branch} 保留原样`);
+        }
+        const message = lines.length > 0
+            ? `已归档 feat-pat ${featureId}：` + lines.join('；')
+            : `已归档 feat-pat ${featureId}。`;
+        void window.showInformationMessage(message);
     }
 
-    this.state = await this.store.removeFeature(featureId);
-    this.emitState();
-    void window.showInformationMessage(`已删除 feat-pat ${featureId}。`);
-}
 
-private async collectDiagnostics(feature: FeatureSnapshot): Promise<string[]> {
-    const issues: string[] = [];
-    const absolutePath = this.resolveWorktreePath(feature);
-    const branchExists = await this.git.branchExists(feature.branch);
-    const worktreeExists = await this.git.hasWorktree(absolutePath);
-    const directoryExists = await this.pathExists(absolutePath);
-    const dirty = directoryExists ? await this.git.isWorktreeDirty(absolutePath) : false;
-    const runtime = this.runtime.get(feature.id);
-    const runningSessions = feature.terminals.filter((session) => session.status === 'running');
 
-    if (!branchExists) {
-        issues.push(`Git 分支 ${feature.branch} 不存在。`);
+    private async collectDiagnostics(feature: FeatureSnapshot): Promise<string[]> {
+        const issues: string[] = [];
+        const attachments = feature.attachments ?? await this.inspectAttachments(feature);
+        if (!feature.attachments || !this.attachmentsEqual(feature.attachments, attachments)) {
+            this.state = await this.store.updateFeatureAttachments(feature.id, attachments);
+        }
+
+        if (!attachments.branch) {
+            issues.push(`Git 分支 ${feature.branch} 不存在。`);
+        }
+        if (feature.parent && !attachments.worktree) {
+            issues.push('Git worktree 未注册。');
+        }
+        if (!attachments.directory) {
+            issues.push('worktree 目录缺失。');
+        }
+
+        const absolutePath = this.resolveWorktreePath(feature);
+        const directoryExists = attachments.directory;
+        const dirty = directoryExists && feature.worktreePath !== '.' ? await this.git.isWorktreeDirty(absolutePath) : false;
+        const runtime = this.runtime.get(feature.id);
+        const runningSessions = feature.terminals.filter((session) => session.status === 'running');
+
+        if (dirty) {
+            issues.push('worktree 存在未提交改动。');
+        }
+        if (runtime && feature.status !== 'running') {
+            issues.push('终端仍在运行，但状态不是 running。');
+        }
+        if (!runtime && feature.status === 'running') {
+            issues.push('状态标记为 running，但没有活动终端。');
+        }
+        if (runningSessions.length > 1) {
+            issues.push('同一 feat-pat 同时有多个 session 标记为 running。');
+        }
+        if (feature.terminals.length === 0) {
+            issues.push('未配置任何 session。');
+        }
+        const names = feature.terminals.map((session) => session.name);
+        if (names.length !== new Set(names).size) {
+            issues.push('存在重复的 session 名称。');
+        }
+        const currentBranch = await this.git.getCurrentBranch();
+        if (attachments.branch && currentBranch === feature.branch) {
+            issues.push('该分支当前正被根工作区检出。');
+        }
+        return issues;
     }
-    if (feature.parent && !worktreeExists) {
-        issues.push('Git worktree 未注册。');
-    }
-    if (feature.parent && !directoryExists) {
-        issues.push('worktree 目录缺失。');
-    }
-    if (dirty) {
-        issues.push('worktree 存在未提交改动。');
-    }
-    if (runtime && feature.status !== 'running') {
-        issues.push('终端仍在运行，但状态不是 running。');
-    }
-    if (!runtime && feature.status === 'running') {
-        issues.push('状态标记为 running，但没有活动终端。');
-    }
-    if (runningSessions.length > 1) {
-        issues.push('同一 feat-pat 同时有多个 session 标记为 running。');
-    }
-    if (feature.terminals.length === 0) {
-        issues.push('未配置任何 session。');
-    }
-    const names = feature.terminals.map((session) => session.name);
-    if (names.length !== new Set(names).size) {
-        issues.push('存在重复的 session 名称。');
-    }
-    const currentBranch = await this.git.getCurrentBranch();
-    if (branchExists && currentBranch === feature.branch) {
-        issues.push('该分支当前正被根工作区检出。');
-    }
-    return issues;
-}
+
 
 private async pathExists(target: string): Promise<boolean> {
     try {

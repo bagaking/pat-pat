@@ -23,7 +23,17 @@
     "onCommand:patPat.removeFeatPat",
     "onCommand:patPat.runSession",
     "onView:patPatActivityView",
-    "workspaceContains:.git"
+    "onCommand:patPat.archiveFeature",
+    "workspaceContains:.git",
+    "onCommand:patPat.toolbar.bootstrapIntegration",
+    "onCommand:patPat.toolbar.newFeatPat",
+    "onCommand:patPat.toolbar.diagnoseSessions",
+    "onCommand:patPat.toolbar.killAll",
+    "onCommand:patPat.inline.runSession",
+    "onCommand:patPat.inline.editSessionCommand",
+    "onCommand:patPat.inline.configFeature",
+    "onCommand:patPat.inline.archiveFeature",
+    "onCommand:patPat.inline.removeFeatPat"
   ],
   "main": "./dist/extension.js",
   "scripts": {
@@ -47,22 +57,32 @@
       {
         "command": "patPat.runSession",
         "category": "Pat Pat",
-        "title": "Run feat-pat session"
+        "title": "Run feat-pat session",
+        "shortTitle": "Run"
       },
       {
         "command": "patPat.editSessionCommand",
         "category": "Pat Pat",
-        "title": "Edit session start command"
+        "title": "Edit session start command",
+        "shortTitle": "Edit"
       },
       {
         "command": "patPat.configFeature",
         "category": "Pat Pat",
-        "title": "Configure feat-pat"
+        "title": "Configure feat-pat",
+        "shortTitle": "Config"
+      },
+      {
+        "command": "patPat.archiveFeature",
+        "category": "Pat Pat",
+        "title": "Archive feat-pat",
+        "shortTitle": "Archive"
       },
       {
         "command": "patPat.removeFeatPat",
         "category": "Pat Pat",
-        "title": "Remove feat-pat"
+        "title": "Archive feat-pat (remove from Pat Pat)",
+        "shortTitle": "Archive"
       },
       {
         "command": "patPat.diagnoseSessions",
@@ -88,6 +108,55 @@
         "command": "patPat.abortAll",
         "category": "Pat Pat",
         "title": "Abort All feat-pat Terminals"
+      },
+      {
+        "command": "patPat.toolbar.bootstrapIntegration",
+        "category": "Pat Pat",
+        "title": "Bootstrap inte-pat",
+        "shortTitle": "Bootstrap"
+      },
+      {
+        "command": "patPat.toolbar.newFeatPat",
+        "category": "Pat Pat",
+        "title": "New feat-pat",
+        "shortTitle": "New"
+      },
+      {
+        "command": "patPat.toolbar.diagnoseSessions",
+        "category": "Pat Pat",
+        "title": "Diagnose sessions",
+        "shortTitle": "Diagnose"
+      },
+      {
+        "command": "patPat.toolbar.killAll",
+        "category": "Pat Pat",
+        "title": "Kill All feat-pat Terminals",
+        "shortTitle": "Kill"
+      },
+      {
+        "command": "patPat.inline.runSession",
+        "category": "Pat Pat",
+        "title": "Run"
+      },
+      {
+        "command": "patPat.inline.editSessionCommand",
+        "category": "Pat Pat",
+        "title": "Edit"
+      },
+      {
+        "command": "patPat.inline.configFeature",
+        "category": "Pat Pat",
+        "title": "Config"
+      },
+      {
+        "command": "patPat.inline.archiveFeature",
+        "category": "Pat Pat",
+        "title": "Archive"
+      },
+      {
+        "command": "patPat.inline.removeFeatPat",
+        "category": "Pat Pat",
+        "title": "Archive"
       }
     ],
     "viewsContainers": {
@@ -110,46 +179,60 @@
     "menus": {
       "view/title": [
         {
-          "command": "patPat.bootstrapIntegration",
+          "command": "patPat.toolbar.bootstrapIntegration",
           "when": "view == patPatActivityView",
-          "group": "navigation@1"
+          "group": "navigation@1",
+          "icon": "$(repo-sync)"
         },
         {
-          "command": "patPat.newFeatPat",
+          "command": "patPat.toolbar.newFeatPat",
           "when": "view == patPatActivityView",
-          "group": "navigation@2"
+          "group": "navigation@2",
+          "icon": "$(git-branch)"
         },
         {
-          "command": "patPat.diagnoseSessions",
+          "command": "patPat.toolbar.diagnoseSessions",
           "when": "view == patPatActivityView",
-          "group": "navigation@3"
+          "group": "navigation@3",
+          "icon": "$(debug-console)"
         },
         {
-          "command": "patPat.killAll",
+          "command": "patPat.toolbar.killAll",
           "when": "view == patPatActivityView",
-          "group": "navigation@4"
+          "group": "navigation@4",
+          "icon": "$(close-all)"
         }
       ],
       "view/item/context": [
         {
-          "command": "patPat.runSession",
+          "command": "patPat.inline.runSession",
           "when": "view == patPatActivityView && viewItem == patPat.session",
-          "group": "inline@1"
+          "group": "inline@1",
+          "icon": "$(play)"
         },
         {
-          "command": "patPat.editSessionCommand",
+          "command": "patPat.inline.editSessionCommand",
           "when": "view == patPatActivityView && viewItem == patPat.session",
-          "group": "inline@2"
+          "group": "inline@2",
+          "icon": "$(pencil)"
         },
         {
-          "command": "patPat.configFeature",
+          "command": "patPat.inline.configFeature",
           "when": "view == patPatActivityView && viewItem == patPat.feature",
-          "group": "inline@1"
+          "group": "inline@1",
+          "icon": "$(settings-gear)"
         },
         {
-          "command": "patPat.removeFeatPat",
+          "command": "patPat.inline.removeFeatPat",
           "when": "view == patPatActivityView && viewItem == patPat.feature",
-          "group": "inline@2"
+          "group": "inline@2",
+          "icon": "$(archive)"
+        },
+        {
+          "command": "patPat.inline.archiveFeature",
+          "when": "view == patPatActivityView && viewItem == patPat.feature",
+          "group": "inline@3",
+          "icon": "$(history)"
         }
       ]
     }

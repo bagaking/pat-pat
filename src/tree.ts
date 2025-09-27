@@ -9,7 +9,15 @@ class FeatureTreeItem extends TreeItem {
         this.contextValue = feature.parent ? 'patPat.feature' : 'patPat.integration';
         this.iconPath = new ThemeIcon(feature.icon, feature.color ? new ThemeColor(feature.color) : undefined);
         const location = feature.worktreePath === '.' ? '.' : feature.worktreePath;
-        this.tooltip = `${feature.branch}\n${location}`;
+        const attachments = feature.attachments;
+        const descriptionLine = runningSession ? `running · ${runningSession.name}` : `status: ${feature.status}`;
+        const attachmentLine = attachments
+            ? `\nHealth: branch ${attachments.branch ? '✓' : '×'} | worktree ${attachments.worktree ? '✓' : '×'} | dir ${attachments.directory ? '✓' : '×'}`
+            : '';
+        const actionLine = feature.parent
+            ? '\nActions: Config ⚙ 调整图标与命令 | Archive ⏳ 归档到 archived/ | Remove ⛔ 清理由 Pat Pat 管理'
+            : '\nActions: Archive ⏳ 归档 inte-pat';
+        this.tooltip = `${feature.branch}\n${location}\n${descriptionLine}${attachmentLine}${actionLine}`;
     }
 }
 
@@ -19,7 +27,8 @@ class SessionTreeItem extends TreeItem {
         this.description = terminal.status;
         const location = feature.worktreePath === '.' ? '.' : feature.worktreePath;
         const commandHint = terminal.startupCommand ? `\n${terminal.startupCommand}` : '';
-        this.tooltip = `${terminal.name} • ${location}${commandHint}`;
+        const actionHint = '\nActions: Run ▶ 启动 session | Edit ✎ 修改启动命令';
+        this.tooltip = `${terminal.name} • ${location}${commandHint}${actionHint}`;
         const running = terminal.status === 'running';
         const iconColor = feature.color ? new ThemeColor(feature.color) : undefined;
         this.iconPath = new ThemeIcon(running ? 'sync~spin' : 'play-circle', iconColor);

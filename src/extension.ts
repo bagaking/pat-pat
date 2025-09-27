@@ -32,7 +32,56 @@ export async function activate(context: ExtensionContext) {
 
     await featureManager.initialize();
 
+    context.subscriptions.push({ dispose: () => featureManager.dispose() });
+
     context.subscriptions.push(window.registerTreeDataProvider('patPatActivityView', treeProvider));
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.inline.runSession', async (...args: unknown[]) => {
+            await commands.executeCommand('patPat.runSession', ...args);
+        })
+    );
+    context.subscriptions.push(
+        commands.registerCommand('patPat.inline.editSessionCommand', async (...args: unknown[]) => {
+            await commands.executeCommand('patPat.editSessionCommand', ...args);
+        })
+    );
+    context.subscriptions.push(
+        commands.registerCommand('patPat.inline.configFeature', async (featureArg?: unknown) => {
+            await commands.executeCommand('patPat.configFeature', featureArg);
+        })
+    );
+    context.subscriptions.push(
+        commands.registerCommand('patPat.inline.archiveFeature', async (featureArg?: unknown) => {
+            await commands.executeCommand('patPat.archiveFeature', featureArg);
+        })
+    );
+    context.subscriptions.push(
+        commands.registerCommand('patPat.inline.removeFeatPat', async (featureArg?: unknown) => {
+            await commands.executeCommand('patPat.removeFeatPat', featureArg);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.toolbar.bootstrapIntegration', async () => {
+            await featureManager.bootstrapIntegration(folder);
+        })
+    );
+    context.subscriptions.push(
+        commands.registerCommand('patPat.toolbar.newFeatPat', async () => {
+            await featureManager.createFeatPat(folder);
+        })
+    );
+    context.subscriptions.push(
+        commands.registerCommand('patPat.toolbar.diagnoseSessions', async () => {
+            await featureManager.diagnoseSessions();
+        })
+    );
+    context.subscriptions.push(
+        commands.registerCommand('patPat.toolbar.killAll', async () => {
+            await featureManager.killAll();
+        })
+    );
 
     context.subscriptions.push(window.onDidCloseTerminal((terminal) => featureManager.handleTerminalClosed(terminal)));
 
@@ -61,6 +110,19 @@ export async function activate(context: ExtensionContext) {
             }
             const targetTerminal = terminalArg ?? reference.terminalName;
             await featureManager.openFeature(reference.id, targetTerminal);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.archiveFeature', async (featureArg?: unknown) => {
+            let reference = await resolveFeatureReference(featureArg);
+            if (!reference) {
+                reference = await pickFeatureReference(store);
+            }
+            if (!reference) {
+                return;
+            }
+            await featureManager.archiveFeature(reference.id);
         })
     );
 
