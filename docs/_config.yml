@@ -1,0 +1,15 @@
+remote_theme: just-the-docs/just-the-docs
+color_scheme: dark
+search_enabled: true
+aux_links:
+  "View on GitHub":
+    - "https://github.com/bagaking/pat-pat"
+
+# Sidebar settings
+nav_sort: case_insensitive
+logo: assets/logo.svg
+
+# Analytics / optional plugin placeholders
+plugins:
+  - jekyll-sitemap
+  - jekyll-seo-tag
