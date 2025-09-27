@@ -15,6 +15,11 @@ export class GitService {
         return stdout.trim();
     }
 
+    private async runGitInPath(args: string[], cwd: string): Promise<string> {
+        const { stdout } = await execFileAsync('git', args, { cwd });
+        return stdout.trim();
+    }
+
     private sanitizeSegment(segment: string): string {
         return segment.replace(/[^a-zA-Z0-9-_]/g, '-');
     }
@@ -31,7 +36,7 @@ export class GitService {
         return [this.sanitizeSegment(feature), INTEGRATION_SUFFIX];
     }
 
-    private async branchExists(branch: string): Promise<boolean> {
+    async branchExists(branch: string): Promise<boolean> {
         try {
             await this.runGit(['rev-parse', '--verify', branch]);
             return true;
@@ -97,6 +102,29 @@ export class GitService {
     async addWorktree(feature: string, destination: string, parent?: string): Promise<void> {
         const branchName = this.toBranchName(feature, parent);
         await this.runGit(['worktree', 'add', destination, branchName]);
+    }
+
+    async removeWorktree(destination: string, force = false): Promise<void> {
+        const args = ['worktree', 'remove'];
+        if (force) {
+            args.push('--force');
+        }
+        args.push(destination);
+        await this.runGit(args);
+    }
+
+    async deleteBranchByName(branchName: string, force = false): Promise<void> {
+        const args = ['branch', force ? '-D' : '-d', branchName];
+        await this.runGit(args);
+    }
+
+    async isWorktreeDirty(destination: string): Promise<boolean> {
+        try {
+            const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: destination });
+            return stdout.trim().length > 0;
+        } catch {
+            return false;
+        }
     }
 
     async hasWorktree(destination: string): Promise<boolean> {

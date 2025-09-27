@@ -121,6 +121,25 @@ export async function activate(context: ExtensionContext) {
         })
     );
 
+    context.subscriptions.push(
+        commands.registerCommand('patPat.removeFeatPat', async (featureArg?: unknown) => {
+            let reference = await resolveFeatureReference(featureArg);
+            if (!reference) {
+                reference = await pickFeatureReference(store);
+            }
+            if (!reference) {
+                return;
+            }
+            await featureManager.removeFeatPat(reference.id);
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand('patPat.diagnoseSessions', async () => {
+            await featureManager.diagnoseSessions();
+        })
+    );
+
     context.subscriptions.push(commands.registerCommand('patPat.killAll', async () => featureManager.killAll()));
     context.subscriptions.push(commands.registerCommand('patPat.clearAll', async () => featureManager.clearAll()));
     context.subscriptions.push(commands.registerCommand('patPat.abortAll', async () => featureManager.abortAll()));
